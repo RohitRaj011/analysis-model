@@ -1,6 +1,6 @@
 # Equity analysis (Streamlit)
 
-Browser UI for Altman Z-Score, DuPont ROE, cash conversion cycle (CCC), and DCF. Core calculation scripts live under `src/analysis_model/`.
+Browser UI for Altman Z-Score, Dupoint ROE, cash conversion cycle (CCC), and DCF. Core calculation scripts live under `src/analysis_model/`.
 
 ## Local run
 
@@ -12,7 +12,7 @@ cp .env.example api.env   # set API= to your Financial Modeling Prep key
 PYTHONPATH=src streamlit run app/streamlit_app.py
 ```
 
-Open the URL Streamlit prints (usually `http://localhost:8501`). Pick a ticker, choose analyses, optionally change DCF growth / years (defaults stay 2% and 5 years), then click **Run analysis**.
+Open the URL Streamlit prints (usually `http://localhost:8501`). Pick a ticker, choose analyses, optionally change DCF perpetual growth (default 2%; forecast is always 5 years), then click **Run analysis**.
 
 Optional CLI (still no prompts):
 
@@ -44,6 +44,8 @@ This app is a long-running Python process, not static HTML. The default public h
    `APP_PASSWORD` is optional. If set, visitors must enter it before running analyses.
 
 5. Deploy. Users get a URL like `https://<app-name>.streamlit.app`.
+
+The app hides Community Cloud Fork / GitHub toolbar links and the “Created by” viewer badge via `.streamlit/config.toml` (`toolbarMode = "minimal"`) and CSS. If those still appear, in the Cloud app **Settings** you can also hide GitHub / viewer identity.
 
 The API key stays on the server. Anyone with the public URL can still consume FMP quota unless you set `APP_PASSWORD`. Limits:
 

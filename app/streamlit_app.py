@@ -35,6 +35,26 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+st.markdown(
+    """
+    <style>
+    /* Community Cloud: Fork / GitHub / Deploy in the top bar (keep hamburger) */
+    .stAppDeployButton { display: none !important; }
+    [data-testid="stToolbar"] a[href*="github.com"],
+    [data-testid="stHeader"] a[href*="github.com"],
+    header a[href*="github.com"] { display: none !important; }
+    [data-testid="stToolbar"] button[kind="header"] { display: none !important; }
+
+    /* Community Cloud: "Created by" / hosted-with viewer badge */
+    div[class^="viewerBadge_"],
+    div[class*="viewerBadge_container"],
+    a[href*="streamlit.io/cloud"],
+    a[href*="share.streamlit.io"] { display: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def _secret(name: str) -> Optional[str]:
     try:
@@ -79,7 +99,7 @@ quota = tracker_status()
 
 st.title("Equity analysis")
 st.caption(
-    "Altman Z-Score, DuPont ROE, cash conversion cycle, and DCF"
+    "Altman Z-Score, Dupoint ROE, cash conversion cycle, and DCF"
 )
 
 with st.sidebar:
@@ -93,7 +113,7 @@ with st.sidebar:
     )
     st.subheader("Analyses")
     run_zscore = st.checkbox("Z-Score", value=True)
-    run_dupont = st.checkbox("DuPont", value=True)
+    run_dupoint = st.checkbox("Dupoint", value=True)
     run_ccc = st.checkbox("CCC", value=True)
     run_dcf = st.checkbox("DCF", value=True)
     st.subheader("DCF assumptions")
@@ -103,15 +123,7 @@ with st.sidebar:
         max_value=10.0,
         value=2.0,
         step=0.1,
-        help="Terminal growth rate. Default 2% matches the original model.",
-    )
-    dcf_years = st.number_input(
-        "Projection years",
-        min_value=1,
-        max_value=15,
-        value=5,
-        step=1,
-        help="Discrete forecast horizon. Default 5 years matches the original model.",
+        help="Terminal growth rate. Default 2% matches the original model. Forecast horizon is always 5 years.",
     )
     st.caption(
         f"Daily uncached runs left: {quota['remaining']} / {quota['max_calls']}. "
@@ -136,9 +148,9 @@ def _metric_items(metrics: Dict[str, Any]) -> List[Tuple[str, str, str]]:
     if metrics.get("roe") is not None:
         items.append(
             (
-                "DuPont ROE",
+                "Dupoint ROE",
                 f"{metrics['roe']:.2%}",
-                "Latest-year five-step DuPont ROE (product of the five drivers).",
+                "Latest-year five-step Dupoint ROE (product of the five drivers).",
             )
         )
     if metrics.get("ccc") is not None:
@@ -162,7 +174,7 @@ def _metric_items(metrics: Dict[str, Any]) -> List[Tuple[str, str, str]]:
 
 
 if submitted:
-    if not (run_zscore or run_dupont or run_ccc or run_dcf):
+    if not (run_zscore or run_dupoint or run_ccc or run_dcf):
         st.warning("Select at least one analysis.")
     elif not os.getenv("API"):
         st.error(
@@ -177,11 +189,10 @@ if submitted:
             result: Optional[Dict[str, Any]] = run_pipeline(
                 ticker=symbol,
                 run_zscore=run_zscore,
-                run_dupont=run_dupont,
+                run_dupoint=run_dupoint,
                 run_ccc=run_ccc,
                 run_dcf=run_dcf,
                 dcf_growth=float(dcf_growth_pct) / 100.0,
-                dcf_years=int(dcf_years),
             )
 
         if result is not None:
@@ -208,9 +219,9 @@ if submitted:
                 if figures.get("zscore") is not None:
                     st.subheader("Z-Score")
                     st.pyplot(figures["zscore"], use_container_width=True)
-                if figures.get("dupont") is not None:
-                    st.subheader("DuPont")
-                    st.pyplot(figures["dupont"], use_container_width=True)
+                if figures.get("dupoint") is not None:
+                    st.subheader("Dupoint")
+                    st.pyplot(figures["dupoint"], use_container_width=True)
                 if figures.get("ccc") is not None:
                     st.subheader("Cash conversion cycle")
                     st.pyplot(figures["ccc"], use_container_width=True)

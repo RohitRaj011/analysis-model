@@ -29,11 +29,10 @@ def short_dcf_verdict(detail: Optional[str]) -> str:
 def run_pipeline(
     ticker: str,
     run_zscore: bool = True,
-    run_dupont: bool = True,
+    run_dupoint: bool = True,
     run_ccc: bool = True,
     run_dcf: bool = True,
     dcf_growth: float = 0.02,
-    dcf_years: int = 5,
 ) -> Dict[str, Any]:
     """Fetch data once, then run the selected analysis modules.
 
@@ -79,11 +78,11 @@ def run_pipeline(
             result["metrics"]["zscore_final"] = zscore.final_value
             result["figures"]["zscore"] = zscore.graph.fig
 
-        if run_dupont:
-            dupont = Dupoint(fetcher=data.storing)
-            dupont.master_initializer()
-            result["metrics"]["roe"] = dupont.final_value
-            result["figures"]["dupont"] = dupont.graph.fig
+        if run_dupoint:
+            dupoint = Dupoint(fetcher=data.storing)
+            dupoint.master_initializer()
+            result["metrics"]["roe"] = dupoint.final_value
+            result["figures"]["dupoint"] = dupoint.graph.fig
 
         if run_ccc:
             ccc = CCC(fetcher=data.storing)
@@ -95,7 +94,6 @@ def run_pipeline(
             dcf = DiscountedCashFlow(
                 data=data.storing,
                 const_growth_rate=dcf_growth,
-                projection_years=dcf_years,
             )
             dcf.master_initialization()
             result["metrics"]["valuation"] = dcf.main_value
