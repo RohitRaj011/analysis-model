@@ -79,7 +79,7 @@ quota = tracker_status()
 
 st.title("Equity analysis")
 st.caption(
-    "Altman Z-Score, DuPont ROE, cash conversion cycle, and DCF — same models as the original scripts."
+    "Altman Z-Score, DuPont ROE, cash conversion cycle, and DCF"
 )
 
 with st.sidebar:
