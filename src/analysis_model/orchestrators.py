@@ -9,6 +9,7 @@ from analysis_model.analysis import Calculation_Altman_zscore
 from analysis_model.analysis.Financial_health import FinancialHealth
 from analysis_model.analysis import Calculations_CCC
 from analysis_model.analysis.operational_efficency import OperationEFFICIENCY
+from analysis_model.data.cached_fetch import load_cached_payload, load_or_fetch_gatherer
 from analysis_model.graphs import CCC_graph
 from analysis_model.graphs import graph_zscore
 from analysis_model.graphs import graph_DCF
@@ -23,14 +24,43 @@ def _project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-def api_tracker(max_calls: int = 30) -> bool:
-    """Tracks daily network API requests against a local limit defined in `tracker.json`.
+MAX_DAILY_RUNS: int = 30
 
-    This function protects downstream operational units from hitting external API key throttles
-    or network rate limits by keeping a daily state log on disk.
+
+def tracker_status(max_calls: int = MAX_DAILY_RUNS) -> Dict[str, Any]:
+    """Read today's analysis-run count without incrementing.
+
+    One tracker unit = one uncached analysis run (about six FMP HTTP calls).
+    Cached re-runs for the same ticker/day do not increment the counter.
+    """
+    file_path: str = os.path.join(_project_root(), "tracker.json")
+    today_str: str = str(date.today())
+    calls = 0
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r") as file:
+                saved_data: Dict[str, Any] = json.load(file)
+                if saved_data.get("date") == today_str:
+                    calls = int(saved_data.get("calls", 0))
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            calls = 0
+    remaining = max(0, max_calls - calls)
+    return {
+        "date": today_str,
+        "calls": calls,
+        "max_calls": max_calls,
+        "remaining": remaining,
+    }
+
+
+def api_tracker(max_calls: int = MAX_DAILY_RUNS) -> bool:
+    """Tracks daily uncached analysis runs against `tracker.json`.
+
+    One increment = one uncached analysis run (about six FMP HTTP calls), not each endpoint.
+    Cached re-runs for the same ticker on the same calendar day do not increment.
 
     Args:
-        max_calls (int): The maximum number of allowed requests per calendar day. Defaults to 30.
+        max_calls (int): Maximum uncached analysis runs per calendar day. Defaults to 30.
 
     Returns:
         bool: True if the request quota for the current day has not been exceeded;
@@ -88,6 +118,8 @@ class GatheringAndStoringAndCleaning():
         self.storing: Optional[StoringAndCleaning] = None
         self.ticker: str = ticker
         self.api_limit: bool = True
+        self.from_cache: bool = False
+        self.premium_warning: Optional[str] = None
 
     def initialize_data(self) -> None:
         """Triggers the raw network extraction layer after validating rate-limit quotas.
@@ -95,16 +127,19 @@ class GatheringAndStoringAndCleaning():
         Checks `api_tracker()` first. If execution is permitted, instantiates `DataGathering` 
         and pulls financial statements across balance sheets, income statements, and cash flows.
         """
+        if load_cached_payload(self.ticker):
+            self.gather, self.from_cache = load_or_fetch_gatherer(self.ticker)
+            self.api_limit = True
+            print("Using cached statements for today; tracker not incremented.")
+            return
+
         if not api_tracker():
             print("Aborting data fetch due to daily rate limit.")
             self.api_limit = False
             return
-        else:
-            self.api_limit = True
-        """Step 1: Triggers the network interaction layer to download market statements."""
+        self.api_limit = True
         print("Gathering raw data...")
-        self.gather = DataGathering(symbol=self.ticker)
-        self.gather.fetch_all_data()
+        self.gather, self.from_cache = load_or_fetch_gatherer(self.ticker)
 
     def process_data(self) -> None:
         """Executes parsing, normalization, and DataFrame compilation.
@@ -121,7 +156,7 @@ class GatheringAndStoringAndCleaning():
         self.storing = StoringAndCleaning(
             data_fetch=self.gather)
         self.storing.fetch_dataframe()
-        self.storing.pandas_dataframe()
+        self.premium_warning = getattr(self.storing, "premium_warning", None)
 
 
 class DiscountedCashFlow():
@@ -139,11 +174,18 @@ class DiscountedCashFlow():
         main_value (Optional[str]): Human-readable textual summary of the valuation verdict.
     """
 
-    def __init__(self, data: StoringAndCleaning) -> None:
+    def __init__(
+        self,
+        data: StoringAndCleaning,
+        const_growth_rate: float = 0.02,
+        projection_years: int = 5,
+    ) -> None:
         """Injects the cleaned data dependency into the DCF pipeline.
 
         Args:
             data (StoringAndCleaning): The initialized data layer holding target DataFrames.
+            const_growth_rate: Perpetual growth rate (default 2%).
+            projection_years: Discrete forecast horizon (default 5).
         """
         # Step 3: Inject the clean parser instance into the core calculator engine
         self.cal: Optional[Calculation] = None
@@ -155,6 +197,8 @@ class DiscountedCashFlow():
         self.graph: Optional[graph_DCF.Graph] = None
 
         self.fetcher: StoringAndCleaning = data
+        self.const_growth_rate: float = const_growth_rate
+        self.projection_years: int = projection_years
 
         # Ultimate container holding the terminal text presentation status status string
         self.main_value: Optional[str] = None
@@ -162,7 +206,11 @@ class DiscountedCashFlow():
     def run_calculations(self) -> None:
         """Executes the mathematical calculations for DCF (e.g., FCF growth rates, discounting)."""
         print("Running calculations...")
-        self.cal = Calculation(fetcher=self.fetcher)
+        self.cal = Calculation(
+            fetcher=self.fetcher,
+            const_growth_rate=self.const_growth_rate,
+            projection_years=self.projection_years,
+        )
         self.cal.fetch_data()
 
     def evaluate_valuation(self) -> Optional[str]:
@@ -236,7 +284,7 @@ class Dupoint():
         print("Calculation Return on Capital.......")
         self.return_on_capital = ReturnOnCapital(fetcher=self.calculation)
         self.return_on_capital.calc()
-        # self.final_value = self.return_on_capital.dupoint_analysis
+        self.final_value = self.return_on_capital.dupoint_analysis_latest_year
 
     def generate_plots(self) -> None:
         """Renders stacked bar/line plots showcasing multi-year DuPont factor breakdown."""
@@ -293,8 +341,10 @@ class Zscore():
         """Plots historical Altman Z-Score lines alongside safety thresholds (1.81 and 2.99)."""
         self.graph = graph_zscore.Graph(fetcher=self.financial_health)
         self.graph.plot()
-
-        # TODO FINAL VALUE TO BE WRITTEN HERE
+        self.final_value = {
+            "score": self.financial_health.score,
+            "zone": self.financial_health.zone_label(),
+        }
 
 
 class CCC():
@@ -341,7 +391,7 @@ class CCC():
         self.operational_efficiency = OperationEFFICIENCY(
             fetcher=self.calculation)
         self.operational_efficiency.calc()
-        # self.final_value = self.operational_efficiency.ccc
+        self.final_value = self.operational_efficiency.ccc_latest_year
 
     def graph_plot(self) -> None:
         """Renders graphical visualizations of working capital cycles."""

@@ -77,8 +77,9 @@ class Graph:
 
         Logic Overview
         --------------
-        1. **Sector Handling**: Modifies `ratios` and `x_lst` dynamically. If the sector is non-manufacturing,
-           `X5` (Sales/Total Assets) is stripped out, adapting to non-manufacturing Altman variants.
+        1. **Sector Handling**: Modifies `ratios` and `x_lst` dynamically. If the Z-score
+           formula does not include X5 (US issuers, or non-manufacturing sectors),
+           `X5` (Sales/Total Assets) is stripped out.
         2. **Visualization Breakdown**:
            - Panel 1 (`ax`): Bar chart representing standard financial ratio metrics.
            - Panel 2 (`ax1`): Distress/Grey/Safe risk zones with company's actual score plotted.
@@ -92,8 +93,8 @@ class Graph:
         ratios: List[str] = list(self.ratios)
         x_lst: List[float] = list(self.x_lst)
 
-        # Dynamic adjustments: Non-manufacturing models exclude Sales/Total Assets (X5)
-        if self.sector.lower() != "manufacturing":
+        # Dynamic adjustments: drop X5 when the formula does not use Sales/Total Assets
+        if not FinancialHealth.uses_x5_ratio(self.sector, self.country):
             ratios.pop(-1)
             x_lst.pop(-1)
 
@@ -161,7 +162,6 @@ if __name__ == "__main__":
     data.fetch_all_data()
     cleaned = StoringAndCleaning(data_fetch=data)
     cleaned.fetch_dataframe()
-    cleaned.pandas_dataframe()
     calc = Calculation(fetcher=cleaned)
     calc.initializer()
     health = FinancialHealth(fetcher=calc)

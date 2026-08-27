@@ -76,6 +76,29 @@ class FinancialHealth:
         self.score: Optional[float] = None
         self.lst_zone: List[float] = []
 
+    @staticmethod
+    def is_us_country(country: str) -> bool:
+        return str(country).lower().strip() in {"usa", "united states", "us", "u.s.", "u.s.a."}
+
+    @classmethod
+    def uses_x5_ratio(cls, sector: str, country: str) -> bool:
+        """True when the 5-factor manufacturing formula (includes X5) is used."""
+        sector_key = str(sector).lower().strip()
+        if cls.is_us_country(country):
+            return False
+        return sector_key in cls.MANUFACTURING_SECTORS
+
+    def zone_label(self) -> str:
+        """Distress / grey / safe from score vs lst_zone (ordered low, high)."""
+        if self.score is None or len(self.lst_zone) < 2:
+            return "unknown"
+        low, high = sorted(self.lst_zone)
+        if self.score < low:
+            return "distress"
+        if self.score < high:
+            return "grey"
+        return "safe"
+
     def fetch_all_data(self) -> None:
         """
         Executes the full evaluation pipeline by computing the Z-Score first
@@ -107,7 +130,7 @@ class FinancialHealth:
         float
             The final calculated Z-Score assigned to `self.score`.
         """
-        if self.country != "usa":
+        if not self.is_us_country(self.country):
             if self.sector in self.MANUFACTURING_SECTORS:
                 self.score = (
                     1.2 * self.x1
@@ -141,13 +164,13 @@ class FinancialHealth:
         Returns
         -------
         List[float]
-            A two-element list representing `[upper_threshold, lower_threshold]`.
-            - Manufacturing sectors: `[2.9, 1.23]`
-            - Non-manufacturing sectors: `[2.6, 1.1]`
+            A two-element list representing `[distress_cutoff, safe_cutoff]`.
+            - Manufacturing sectors: `[1.23, 2.9]` (distress, safe)
+            - Non-manufacturing sectors: `[1.1, 2.6]`
         """
         if self.sector in self.MANUFACTURING_SECTORS:
-            self.lst_zone = [2.9, 1.23]
+            self.lst_zone = [1.23, 2.9]
         else:
-            self.lst_zone = [2.6, 1.1]
+            self.lst_zone = [1.1, 2.6]
 
         return self.lst_zone

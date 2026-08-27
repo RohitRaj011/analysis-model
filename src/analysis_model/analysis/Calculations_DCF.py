@@ -31,16 +31,23 @@ class Calculation:
         enterprise_value (float): The final calculated intrinsic value of the operation.
     """
 
-    def __init__(self, fetcher: DataGathering) -> None:
+    def __init__(
+        self,
+        fetcher: StoringAndCleaning,
+        const_growth_rate: float = 0.02,
+        projection_years: int = 5,
+    ) -> None:
         """Initializes the Calculation pipeline by extracting data from the fetcher module.
 
         Args:
-            fetcher (DataGathering): An instance of the data gathering class holding 
-                the populated financial statement DataFrames.
+            fetcher (StoringAndCleaning): Cleaned statement DataFrames.
+            const_growth_rate: Perpetual growth rate for terminal value (default 2%).
+            projection_years: Discrete forecast years (default 5).
         """
         # Base data frames must be assigned first and sorted chronologically (ascending)
         # to ensure that time-series analysis tools like .diff() and .rolling() evaluate accurately.
-        self.const_growth_rate: float = 0.02
+        self.const_growth_rate: float = const_growth_rate
+        self.projection_years: int = int(projection_years)
         self.pnl: pd.DataFrame = fetcher.df_pnl.sort_index(ascending=True)
         self.bs: pd.DataFrame = fetcher.df_bs.sort_index(ascending=True)
         self.cf: pd.DataFrame = fetcher.df_cf.sort_index(ascending=True)
@@ -180,7 +187,7 @@ class Calculation:
         Applies the compounding calculated historical rolling average growth rate 
         against the latest year's actual Free Cash Flow.
         """
-        self.projections = pd.DataFrame(index=range(1, 6))
+        self.projections = pd.DataFrame(index=range(1, self.projection_years + 1))
         self.projections["Growth Rate"] = 1 + \
             self.data.loc[self.latest_year, "Average Growth Rate"]
 
@@ -208,11 +215,12 @@ class Calculation:
         beyond the 5-year discrete projection window.
         """
         # Gordon Growth formula: (Final Year Cashflow * (1 + Perpetual Growth Rate)) / (WACC - Perpetual Growth Rate)
-        self.terminal_value = (self.projections.loc[5, "Projected Cashflow"]) * (1 + self.const_growth_rate) / \
+        last_year = self.projection_years
+        self.terminal_value = (self.projections.loc[last_year, "Projected Cashflow"]) * (1 + self.const_growth_rate) / \
                               (self.wacc - self.const_growth_rate)
-        # Discount the massive lump-sum perpetual value back 5 years to present value terms
+        # Discount the massive lump-sum perpetual value back to present value terms
         self.terminal_value_discounted = self.terminal_value / \
-            (1 + self.wacc) ** 5
+            (1 + self.wacc) ** last_year
 
     def sum_of_pv_calc(self) -> None:
         """Aggregates the present value of the 5-year discrete projection window."""
@@ -227,7 +235,6 @@ if __name__ == "__main__":
     data_fetcher = DataGathering("AAPL")
     cleaned = StoringAndCleaning(data_fetch=data_fetcher)
     cleaned.fetch_dataframe()
-    cleaned.pandas_dataframe()
     cal = Calculation(fetcher=cleaned)
     cal.fetch_data()
     print(cal.enterprise_value)

@@ -76,7 +76,6 @@ if __name__ == "__main__":
     data_fetcher = DataGathering("AAPL")
     cleaned = StoringAndCleaning(data_fetch=data_fetcher)
     cleaned.fetch_dataframe()
-    cleaned.pandas_dataframe()
     cal = Calculation(fetcher=cleaned)
     cal.fetch_data()
     val = Valuation(fetcher=cal)

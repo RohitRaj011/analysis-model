@@ -1,6 +1,6 @@
 # Equity analysis (Streamlit)
 
-Browser UI for Altman Z-Score, DuPont ROE, cash conversion cycle (CCC), and DCF. Core calculation scripts are unchanged; they live under `src/analysis_model/`.
+Browser UI for Altman Z-Score, DuPont ROE, cash conversion cycle (CCC), and DCF. Core calculation scripts live under `src/analysis_model/`.
 
 ## Local run
 
@@ -12,12 +12,19 @@ cp .env.example api.env   # set API= to your Financial Modeling Prep key
 PYTHONPATH=src streamlit run app/streamlit_app.py
 ```
 
-Open the URL Streamlit prints (usually `http://localhost:8501`). Enter a ticker, pick analyses, click **Run analysis**. There is no terminal `input()`.
+Open the URL Streamlit prints (usually `http://localhost:8501`). Pick a ticker, choose analyses, optionally change DCF growth / years (defaults stay 2% and 5 years), then click **Run analysis**.
 
 Optional CLI (still no prompts):
 
 ```bash
 PYTHONPATH=src python main.py --ticker AAPL --all
+```
+
+Dev tests:
+
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=src pytest
 ```
 
 ## Public website (Streamlit Community Cloud)
@@ -31,13 +38,27 @@ This app is a long-running Python process, not static HTML. The default public h
 
    ```toml
    API = "your-fmp-key"
+   APP_PASSWORD = "optional-shared-password"
    ```
+
+   `APP_PASSWORD` is optional. If set, visitors must enter it before running analyses.
 
 5. Deploy. Users get a URL like `https://<app-name>.streamlit.app`.
 
-Cloud installs `requirements.txt` from the repo root. `PYTHONPATH` is set in `app/streamlit_app.py` so `analysis_model` imports work without extra config.
+The API key stays on the server. Anyone with the public URL can still consume FMP quota unless you set `APP_PASSWORD`. Limits:
 
-The API key stays on the server. Anyone with the public URL can run analyses and consume your FMP quota. `api_tracker` still caps daily calls via `tracker.json`. Auth / a shared password can be added later.
+- **Daily tracker:** 30 uncached analysis **runs** per calendar day (`tracker.json`). One run is one ticker fetch (~6 FMP HTTP calls), not one HTTP request. Re-running the same ticker the same day uses the `cache/` JSON and does not increment the tracker.
+- **Session cap:** 15 successful runs per browser session.
+
+### Rotate the FMP key
+
+`api.env` was previously a local plaintext file and is gitignored. After cloning or if this folder was ever copied:
+
+1. Create a new key in the [FMP dashboard](https://site.financialmodelingprep.com/developer/docs).
+2. Put it only in local `api.env` and in Streamlit Cloud secrets (`API`).
+3. Revoke the old key.
+
+Never commit `api.env`.
 
 ### Backups
 
@@ -61,7 +82,9 @@ Set `API` in the environment or in local `api.env` (compose can load it; it is *
 
 ```
 app/streamlit_app.py          website entry
+app/tickers.py                sidebar ticker list
 src/analysis_model/           package (data, analysis, graphs, pipeline)
+tests/                        pytest fixtures for core identities
 deploy/                       Dockerfile + compose
 main.py                       optional CLI
 ```

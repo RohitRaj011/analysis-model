@@ -1,11 +1,10 @@
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union, TypedDict
+from typing import Any, Dict, List, Optional, Union, TypedDict, Tuple
 import pandas as pd
 import numpy as np
 
-# Assuming DataGathering is imported from your module:
-# from Data_gathering import DataGathering
+from analysis_model.errors import AnalysisError
 
 
 class ProfileDict(TypedDict):
@@ -28,6 +27,78 @@ class RiskPremiumDict(TypedDict):
 # Structural JSON Payload Aliases
 FinancialRecord = Dict[str, Any]
 JSONData = Union[List[FinancialRecord], FinancialRecord]
+
+
+_COUNTRY_ALIASES = {
+    "usa": "united states",
+    "us": "united states",
+    "u.s.": "united states",
+    "u.s.a.": "united states",
+    "united states of america": "united states",
+    "uk": "united kingdom",
+    "great britain": "united kingdom",
+    "south korea": "korea",
+    "republic of korea": "korea",
+}
+
+
+def normalize_country(name: Optional[str]) -> str:
+    raw = (name or "").strip().lower()
+    return _COUNTRY_ALIASES.get(raw, raw)
+
+
+def match_equity_risk_premium(
+    premium_rows: Any, country: Optional[str]
+) -> Tuple[float, Optional[str]]:
+    """Return (ERP, warning). Falls back to United States if country is missing or unmatched."""
+    rows: List[Dict[str, Any]]
+    if isinstance(premium_rows, list):
+        rows = [row for row in premium_rows if isinstance(row, dict)]
+    elif isinstance(premium_rows, dict):
+        rows = [premium_rows]
+    else:
+        rows = []
+
+    def _premium_of(row: Dict[str, Any]) -> Optional[float]:
+        value = row.get("totalEquityRiskPremium")
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _country_of(row: Dict[str, Any]) -> str:
+        return normalize_country(str(row.get("country") or row.get("Country") or ""))
+
+    us_rate: Optional[float] = None
+    for row in rows:
+        if _country_of(row) == "united states":
+            us_rate = _premium_of(row)
+            break
+
+    target = normalize_country(country)
+    if target:
+        for row in rows:
+            if _country_of(row) == target:
+                rate = _premium_of(row)
+                if rate is not None:
+                    return rate, None
+
+    if us_rate is not None:
+        warning = (
+            f"No equity risk premium match for country {country!r}; using United States."
+            if target
+            else "Company country missing; using United States equity risk premium."
+        )
+        return us_rate, warning
+
+    if rows:
+        fallback = _premium_of(rows[0])
+        if fallback is not None:
+            return fallback, "Could not match country ERP; using first premium row."
+
+    raise AnalysisError("Equity risk premium data is empty.")
 
 
 class StoringAndCleaning:
@@ -102,6 +173,7 @@ class StoringAndCleaning:
         self.interest_rate: float = 0.0
         self.dilluted_shares: float = 0.0
         self.premium_rate: float = 0.0
+        self.premium_warning: Optional[str] = None
 
         # --- Structured Output DataFrames ---
         self.df_pnl: pd.DataFrame = pd.DataFrame()
@@ -122,6 +194,11 @@ class StoringAndCleaning:
         3. Pull market constants (`extras`).
         4. Construct final Pandas DataFrames.
         """
+        if not self.pnl or not self.bs or not self.cf:
+            raise AnalysisError(
+                "Income statement, balance sheet, or cash flow is empty. "
+                "The ticker may be invalid, an ETF, or delisted."
+            )
         self.financial_years()
         self.income_statement()
         self.balance_sheet()
@@ -221,13 +298,36 @@ class StoringAndCleaning:
 
     def extras(self) -> None:
         """Extracts single-value snapshot metrics, market inputs, and valuation constants."""
-        self.current_price = float(self.profile[0]["price"])
-        self.beta = float(self.profile[0]["beta"])
-        self.market_cap = float(self.profile[0]["marketCap"])
-        self.interest_rate = float(self.rate[0]["year10"])
-        self.dilluted_shares = float(self.pnl[0]["weightedAverageShsOutDil"])
-        # Selected index target for country risk premium lookup
-        self.premium_rate = float(self.premium[8]["totalEquityRiskPremium"])
+        if not self.profile:
+            raise AnalysisError("Company profile is empty. The ticker may be invalid.")
+        if not self.rate:
+            raise AnalysisError("Treasury yield data is empty. Try again later.")
+        if not self.pnl:
+            raise AnalysisError("Income statement is empty. The ticker may be invalid.")
+
+        profile_row = self.profile[0] if isinstance(self.profile, list) else self.profile
+        rate_row = self.rate[0] if isinstance(self.rate, list) else self.rate
+        pnl_row = self.pnl[0] if isinstance(self.pnl, list) else self.pnl
+
+        try:
+            self.current_price = float(profile_row["price"])
+            self.beta = float(profile_row["beta"])
+            self.market_cap = float(profile_row["marketCap"])
+            self.interest_rate = float(rate_row["year10"])
+            self.dilluted_shares = float(pnl_row["weightedAverageShsOutDil"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise AnalysisError(
+                "Statements are missing price, beta, market cap, or share count."
+            ) from exc
+
+        if self.beta is None or self.dilluted_shares in (None, 0, 0.0):
+            raise AnalysisError(
+                "Missing beta or diluted shares. This ticker cannot be valued."
+            )
+
+        self.premium_rate, self.premium_warning = match_equity_risk_premium(
+            self.premium, self.country
+        )
 
     def pandas_dataframe(self) -> None:
         """Assembles extracted 1D vectors into structured Pandas DataFrames.

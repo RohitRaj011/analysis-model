@@ -15,6 +15,8 @@ import requests as r
 from dotenv import load_dotenv
 import yfinance as yf
 
+from analysis_model.errors import AnalysisError
+
 # Load API from project-root api.env if present (Streamlit Cloud uses env / secrets instead)
 _search_dir: str = os.path.dirname(os.path.abspath(__file__))
 for _ in range(6):
@@ -81,6 +83,81 @@ class DataGathering:
         self.country: Optional[str] = None
         self.sector: Optional[str] = None
 
+    def _fmp_get(self, url: str, params: Dict[str, Any]) -> JSONResponse:
+        """GET an FMP endpoint and map HTTP/empty responses to AnalysisError."""
+        if not self.api_key:
+            raise AnalysisError(
+                "No API key found. Set API in api.env (local) or Streamlit secrets."
+            )
+        try:
+            response: r.Response = r.get(url=url, params=params, timeout=30)
+        except r.RequestException as exc:
+            raise AnalysisError(
+                "Could not reach Financial Modeling Prep. Check your network and try again."
+            ) from exc
+
+        if response.status_code in (401, 403):
+            raise AnalysisError(
+                "API key was rejected. Check the FMP key in secrets or api.env."
+            )
+        if response.status_code == 429:
+            raise AnalysisError(
+                "Financial Modeling Prep rate limit reached. Try again later."
+            )
+        if response.status_code >= 400:
+            raise AnalysisError(
+                f"No usable data for {self.stock_symbol} (HTTP {response.status_code}). "
+                "The ticker may be invalid, delisted, or unsupported."
+            )
+
+        try:
+            payload: JSONResponse = response.json()
+        except ValueError as exc:
+            raise AnalysisError(
+                f"Unexpected response for {self.stock_symbol}. Try another ticker."
+            ) from exc
+
+        if isinstance(payload, dict) and payload.get("Error Message"):
+            raise AnalysisError(
+                f"No data for {self.stock_symbol}: {payload.get('Error Message')}"
+            )
+        if payload in (None, [], {}):
+            raise AnalysisError(
+                f"No financial statements for {self.stock_symbol}. "
+                "Check the ticker (ETFs and delisted names often fail)."
+            )
+        return payload
+
+    def to_payload(self) -> Dict[str, Any]:
+        """Serialize fetched payloads for disk / Streamlit cache."""
+        return {
+            "symbol": self.stock_symbol,
+            "pnl_data": self.pnl_data,
+            "balance_sheet_data": self.balance_sheet_data,
+            "cashflow_data": self.cashflow_data,
+            "company_profile_data": self.company_profile_data,
+            "treasury_rate_data": self.treasury_rate_data,
+            "market_premium_data": self.market_premium_data,
+            "general_data": self.general_data,
+            "country": self.country,
+            "sector": self.sector,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Dict[str, Any]) -> "DataGathering":
+        """Rebuild a gathering instance from a cached payload (no HTTP)."""
+        instance = cls(symbol=str(payload.get("symbol", "")))
+        instance.pnl_data = payload.get("pnl_data")
+        instance.balance_sheet_data = payload.get("balance_sheet_data")
+        instance.cashflow_data = payload.get("cashflow_data")
+        instance.company_profile_data = payload.get("company_profile_data")
+        instance.treasury_rate_data = payload.get("treasury_rate_data")
+        instance.market_premium_data = payload.get("market_premium_data")
+        instance.general_data = payload.get("general_data")
+        instance.country = payload.get("country")
+        instance.sector = payload.get("sector")
+        return instance
+
     def fetch_all_data(self) -> None:
         """Executes sequential API calls to populate all financial and market properties."""
         self.pnl_data = self.income_statement()
@@ -98,9 +175,7 @@ class DataGathering:
             JSONResponse: List of dictionaries containing Revenue, EBIT, Taxes, and Net Income.
         """
         pnl_url: str = "https://financialmodelingprep.com/stable/income-statement"
-        pnl: r.Response = r.get(url=pnl_url, params=self.parameters)
-        pnl.raise_for_status()
-        return pnl.json()
+        return self._fmp_get(url=pnl_url, params=dict(self.parameters))
 
     def balance_sheet(self) -> JSONResponse:
         """Fetches the 5-year historical Balance Sheet data from FMP.
@@ -109,9 +184,7 @@ class DataGathering:
             JSONResponse: List of dictionaries containing Total Assets, Liabilities, and Equity items.
         """
         bs_url: str = "https://financialmodelingprep.com/stable/balance-sheet-statement"
-        bs: r.Response = r.get(url=bs_url, params=self.parameters)
-        bs.raise_for_status()
-        return bs.json()
+        return self._fmp_get(url=bs_url, params=dict(self.parameters))
 
     def cashflow(self) -> JSONResponse:
         """Fetches the 5-year historical Cash Flow Statement from FMP.
@@ -120,9 +193,7 @@ class DataGathering:
             JSONResponse: List of dictionaries containing Operating Cash Flows and CapEx.
         """
         cf_url: str = "https://financialmodelingprep.com/stable/cash-flow-statement"
-        cf: r.Response = r.get(url=cf_url, params=self.parameters)
-        cf.raise_for_status()
-        return cf.json()
+        return self._fmp_get(url=cf_url, params=dict(self.parameters))
 
     def company_profile(self) -> JSONResponse:
         """Fetches key profile metrics (Beta, Market Capitalization) from FMP.
@@ -131,9 +202,7 @@ class DataGathering:
             JSONResponse: Dictionary containing overview market parameters.
         """
         profile_url: str = "https://financialmodelingprep.com/stable/profile"
-        profile: r.Response = r.get(url=profile_url, params=self.parameters)
-        profile.raise_for_status()
-        return profile.json()
+        return self._fmp_get(url=profile_url, params=dict(self.parameters))
 
     def treasury_rate(self) -> JSONResponse:
         """Fetches US Treasury bond yields using a 5-day historical lookback window.
@@ -154,9 +223,7 @@ class DataGathering:
             "from": start_date.isoformat(),
             "to": date.today().isoformat(),
         }
-        rate: r.Response = r.get(url=rate_url, params=parameters)
-        rate.raise_for_status()
-        return rate.json()
+        return self._fmp_get(url=rate_url, params=parameters)
 
     def market_premium(self) -> JSONResponse:
         """Fetches regional Equity Market Risk Premiums (ERP) for CAPM hurdle calculations.
@@ -166,9 +233,7 @@ class DataGathering:
         """
         premium_url: str = "https://financialmodelingprep.com/stable/market-risk-premium"
         parameters: Dict[str, Optional[str]] = {"apikey": self.api_key}
-        premium: r.Response = r.get(url=premium_url, params=parameters)
-        premium.raise_for_status()
-        return premium.json()
+        return self._fmp_get(url=premium_url, params=parameters)
 
     def general_info(self) -> None:
         """Extracts general metadata (country, industry sector) using `yfinance`.
@@ -176,12 +241,29 @@ class DataGathering:
         Design Rationale:
             `yfinance` provides reliable sector and country metadata, supplementing FMP financial statements.
         """
-        ticker: yf.Ticker = yf.Ticker(self.stock_symbol)
-        information: Dict[str, Any] = ticker.info
+        try:
+            ticker: yf.Ticker = yf.Ticker(self.stock_symbol)
+            information: Dict[str, Any] = ticker.info or {}
+        except Exception as exc:
+            raise AnalysisError(
+                f"Could not load company profile for {self.stock_symbol}."
+            ) from exc
 
         self.general_data = information
         self.country = information.get("country")
         self.sector = information.get("sector")
+
+        if isinstance(self.company_profile_data, list) and self.company_profile_data:
+            profile_row = self.company_profile_data[0]
+            if not self.country:
+                self.country = profile_row.get("country")
+            if not self.sector:
+                self.sector = profile_row.get("sector")
+        elif isinstance(self.company_profile_data, dict):
+            if not self.country:
+                self.country = self.company_profile_data.get("country")
+            if not self.sector:
+                self.sector = self.company_profile_data.get("sector")
 
 
 if __name__ == "__main__":

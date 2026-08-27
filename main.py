@@ -22,6 +22,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dupont", action="store_true")
     parser.add_argument("--ccc", action="store_true")
     parser.add_argument("--dcf", action="store_true")
+    parser.add_argument(
+        "--dcf-growth",
+        type=float,
+        default=0.02,
+        help="Perpetual growth rate (default 0.02)",
+    )
+    parser.add_argument(
+        "--dcf-years",
+        type=int,
+        default=5,
+        help="Projection years (default 5)",
+    )
     return parser.parse_args()
 
 
@@ -35,6 +47,8 @@ def main() -> None:
         run_dupont=run_all or args.dupont,
         run_ccc=run_all or args.ccc,
         run_dcf=run_all or args.dcf,
+        dcf_growth=args.dcf_growth,
+        dcf_years=args.dcf_years,
     )
     if result.get("error"):
         print(result["error"])

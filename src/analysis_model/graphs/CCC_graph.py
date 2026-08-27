@@ -272,7 +272,6 @@ if __name__ == "__main__":
 
     cleaned: StoringAndCleaning = StoringAndCleaning(data_fetch=data_fetcher)
     cleaned.fetch_dataframe()
-    cleaned.pandas_dataframe()
 
     cal: Calculation = Calculation(fetcher=cleaned)
     cal.master_initializer()
