@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -82,14 +81,6 @@ def _require_password() -> None:
     st.stop()
 
 
-def _selectbox_kwargs() -> Dict[str, Any]:
-    params = inspect.signature(st.selectbox).parameters
-    kwargs: Dict[str, Any] = {}
-    if "accept_new_options" in params:
-        kwargs["accept_new_options"] = True
-    return kwargs
-
-
 _require_password()
 
 if "session_runs" not in st.session_state:
@@ -108,8 +99,7 @@ with st.sidebar:
         "Ticker",
         options=TICKERS,
         index=default_index,
-        help="Type to filter. Names not on the list can be typed if this Streamlit version allows it.",
-        **_selectbox_kwargs(),
+        help="Type to filter.",
     )
     st.subheader("Analyses")
     run_zscore = st.checkbox("Z-Score", value=True)
