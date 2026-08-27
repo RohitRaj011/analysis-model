@@ -1,0 +1,9 @@
+api.env
+.env
+.venv
+venv
+.git
+__pycache__
+tracker.json
+*.pyc
+.DS_Store

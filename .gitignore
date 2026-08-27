@@ -1,0 +1,13 @@
+api.env
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.DS_Store
+tracker.json
+.pytest_cache/
+.mypy_cache/
